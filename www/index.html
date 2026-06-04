@@ -1,0 +1,742 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <title>有限空间作业监控</title>
+  <style>
+    /* ===== CSS 重置 & 基础 ===== */
+    * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+    :root {
+      --primary:    #1a73e8;
+      --danger:     #e53935;
+      --warning:    #f57c00;
+      --success:    #2e7d32;
+      --bg:         #0d1117;
+      --surface:    #161b22;
+      --surface2:   #21262d;
+      --border:     #30363d;
+      --text:       #e6edf3;
+      --text-sub:   #8b949e;
+      --radius:     12px;
+    }
+
+    html, body {
+      width: 100%; height: 100%; overflow: hidden;
+      background: var(--bg); color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+
+    /* ===== 布局 ===== */
+    #app {
+      display: flex; flex-direction: column;
+      height: 100vh; height: 100dvh;
+    }
+
+    /* ===== 顶部标题栏 ===== */
+    #header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 16px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0; z-index: 10;
+    }
+    #header h1 { font-size: 15px; font-weight: 600; letter-spacing: .3px; }
+    #header h1 span { color: var(--primary); }
+    #status-badge {
+      display: flex; align-items: center; gap: 6px;
+      font-size: 12px; color: var(--text-sub);
+    }
+    #status-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--text-sub);
+      transition: background .3s;
+    }
+    #status-dot.active { background: #3fb950; box-shadow: 0 0 6px #3fb950; }
+    #status-dot.alarm  { background: var(--danger); box-shadow: 0 0 8px var(--danger); animation: pulse 1s infinite; }
+
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+    /* ===== 摄像头区域 ===== */
+    #camera-section {
+      position: relative; flex: 1; background: #000; overflow: hidden;
+      min-height: 0;
+    }
+    #video {
+      width: 100%; height: 100%;
+      object-fit: cover; display: block;
+      transform: scaleX(-1); /* 前置摄像头镜像 */
+    }
+    #video.rear { transform: scaleX(1); }
+
+    /* 摄像头覆盖层（权限提示） */
+    #cam-overlay {
+      position: absolute; inset: 0;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 16px;
+      background: rgba(0,0,0,.85);
+    }
+    #cam-overlay .icon { font-size: 56px; }
+    #cam-overlay p { font-size: 14px; color: var(--text-sub); text-align: center; padding: 0 24px; line-height: 1.6; }
+    #cam-overlay button {
+      padding: 12px 32px; border-radius: 24px; border: none;
+      background: var(--primary); color: #fff;
+      font-size: 15px; cursor: pointer; font-weight: 600;
+    }
+
+    /* 摄像头角标信息 */
+    #cam-info {
+      position: absolute; top: 10px; left: 12px;
+      display: flex; flex-direction: column; gap: 4px;
+      pointer-events: none;
+    }
+    .cam-tag {
+      background: rgba(0,0,0,.55); backdrop-filter: blur(6px);
+      border: 1px solid rgba(255,255,255,.12);
+      color: #fff; font-size: 11px; padding: 3px 8px; border-radius: 6px;
+    }
+
+    /* 摄像头切换按钮 */
+    #btn-flip {
+      position: absolute; top: 10px; right: 12px;
+      width: 40px; height: 40px; border-radius: 50%; border: none;
+      background: rgba(0,0,0,.5); backdrop-filter: blur(6px);
+      color: #fff; font-size: 20px; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      border: 1px solid rgba(255,255,255,.15);
+    }
+
+    /* 录制指示灯 */
+    #rec-indicator {
+      position: absolute; bottom: 12px; left: 12px;
+      display: flex; align-items: center; gap: 6px;
+      background: rgba(0,0,0,.55); backdrop-filter: blur(6px);
+      border: 1px solid rgba(255,255,255,.12);
+      padding: 4px 10px; border-radius: 8px;
+      font-size: 11px; color: #fff; opacity: 0;
+      transition: opacity .3s;
+    }
+    #rec-indicator.on { opacity: 1; }
+    #rec-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--danger); animation: pulse 1s infinite; }
+
+    /* ===== 底部控制面板 ===== */
+    #control-panel {
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      padding: 14px 16px 20px;
+      flex-shrink: 0;
+    }
+
+    /* 倒计时显示 */
+    #timer-display {
+      display: flex; flex-direction: column; align-items: center;
+      margin-bottom: 14px;
+    }
+    #timer-label {
+      font-size: 11px; color: var(--text-sub); letter-spacing: .8px;
+      text-transform: uppercase; margin-bottom: 4px;
+    }
+    #timer-ring {
+      position: relative; width: 120px; height: 120px; margin: 0 auto 8px;
+    }
+    #timer-ring svg { transform: rotate(-90deg); }
+    #ring-bg  { fill: none; stroke: var(--surface2); stroke-width: 7; }
+    #ring-fg  {
+      fill: none; stroke: var(--primary); stroke-width: 7;
+      stroke-linecap: round;
+      stroke-dasharray: 339.29;   /* 2π×54 */
+      stroke-dashoffset: 0;
+      transition: stroke .4s, stroke-dashoffset .9s linear;
+    }
+    #ring-fg.warn   { stroke: var(--warning); }
+    #ring-fg.danger { stroke: var(--danger); }
+    #timer-text {
+      position: absolute; inset: 0;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+    }
+    #timer-num  { font-size: 30px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    #timer-unit { font-size: 11px; color: var(--text-sub); margin-top: -2px; }
+
+    #timer-progress-label {
+      font-size: 12px; color: var(--text-sub); text-align: center;
+      margin-bottom: 12px;
+    }
+
+    /* 主操作按钮行 */
+    #btn-row {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+      margin-bottom: 10px;
+    }
+
+    .btn {
+      padding: 13px 10px; border-radius: var(--radius); border: none;
+      font-size: 14px; font-weight: 600; cursor: pointer;
+      display: flex; align-items: center; justify-content: center; gap: 6px;
+      transition: transform .12s, filter .12s, background .2s;
+      -webkit-user-select: none; user-select: none;
+    }
+    .btn:active { transform: scale(.96); filter: brightness(.85); }
+    .btn:disabled { opacity: .4; pointer-events: none; }
+
+    .btn-primary { background: var(--primary); color: #fff; }
+    .btn-success { background: var(--success); color: #fff; }
+    .btn-danger  { background: var(--danger);  color: #fff; }
+    .btn-ghost   { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+
+    /* 报警确认大按钮 */
+    #btn-confirm {
+      width: 100%; padding: 16px; border-radius: var(--radius);
+      background: var(--danger); color: #fff;
+      font-size: 16px; font-weight: 700; border: none; cursor: pointer;
+      display: none; align-items: center; justify-content: center; gap: 8px;
+      animation: alarmPulse 1s infinite;
+      margin-bottom: 10px;
+    }
+    #btn-confirm.show { display: flex; }
+
+    @keyframes alarmPulse {
+      0%,100% { box-shadow: 0 0 0 0 rgba(229,57,53,.5); }
+      50%      { box-shadow: 0 0 0 12px rgba(229,57,53,0); }
+    }
+
+    /* 状态信息条 */
+    #info-bar {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 8px 12px; border-radius: 8px;
+      background: var(--surface2); font-size: 12px; color: var(--text-sub);
+    }
+    #info-cycle  { }
+    #info-time   { font-variant-numeric: tabular-nums; }
+
+    /* ===== 报警浮层 ===== */
+    #alarm-modal {
+      display: none; position: fixed; inset: 0; z-index: 100;
+      background: rgba(229,57,53,.15); backdrop-filter: blur(4px);
+      flex-direction: column; align-items: center; justify-content: center;
+      padding: 32px;
+    }
+    #alarm-modal.show { display: flex; }
+    #alarm-card {
+      background: var(--surface); border: 2px solid var(--danger);
+      border-radius: 20px; padding: 28px 24px; text-align: center;
+      width: 100%; max-width: 340px;
+      animation: slideUp .3s ease;
+    }
+    @keyframes slideUp { from{transform:translateY(40px);opacity:0} to{transform:translateY(0);opacity:1} }
+    #alarm-icon   { font-size: 56px; margin-bottom: 12px; animation: pulse 1s infinite; }
+    #alarm-title  { font-size: 22px; font-weight: 700; color: var(--danger); margin-bottom: 8px; }
+    #alarm-msg    { font-size: 13px; color: var(--text-sub); line-height: 1.6; margin-bottom: 20px; }
+    #alarm-cycle-info { font-size: 13px; color: var(--text); margin-bottom: 20px; font-weight: 600; }
+    #btn-ack {
+      width: 100%; padding: 16px; border-radius: 12px; border: none;
+      background: var(--danger); color: #fff;
+      font-size: 16px; font-weight: 700; cursor: pointer;
+      animation: alarmPulse 1s infinite;
+    }
+    #btn-snooze {
+      width: 100%; padding: 12px; border-radius: 12px; border: 1px solid var(--border);
+      background: transparent; color: var(--text-sub);
+      font-size: 13px; cursor: pointer; margin-top: 10px;
+    }
+
+    /* ===== Toast ===== */
+    #toast {
+      position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(80px);
+      background: var(--surface2); border: 1px solid var(--border);
+      color: var(--text); padding: 10px 20px; border-radius: 24px;
+      font-size: 13px; white-space: nowrap; z-index: 200;
+      transition: transform .3s ease;
+    }
+    #toast.show { transform: translateX(-50%) translateY(0); }
+  </style>
+</head>
+<body>
+<div id="app">
+
+  <!-- 顶部标题栏 -->
+  <div id="header">
+    <h1>⚠️ <span>有限空间</span> 作业监控</h1>
+    <div id="status-badge">
+      <div id="status-dot"></div>
+      <span id="status-text">待机</span>
+    </div>
+  </div>
+
+  <!-- 摄像头预览区 -->
+  <div id="camera-section">
+    <video id="video" autoplay playsinline muted></video>
+
+    <!-- 权限提示覆盖层 -->
+    <div id="cam-overlay">
+      <div class="icon">📷</div>
+      <p>需要摄像头权限以实时监控作业现场</p>
+      <button onclick="startCamera()">开启摄像头</button>
+    </div>
+
+    <!-- 角标信息 -->
+    <div id="cam-info" style="display:none">
+      <div class="cam-tag" id="cam-res">-</div>
+      <div class="cam-tag" id="cam-facing">前置</div>
+    </div>
+
+    <!-- 摄像头切换 -->
+    <button id="btn-flip" onclick="flipCamera()" style="display:none">🔄</button>
+
+    <!-- 录制状态 -->
+    <div id="rec-indicator">
+      <div id="rec-dot"></div>
+      <span>监控中</span>
+    </div>
+  </div>
+
+  <!-- 底部控制面板 -->
+  <div id="control-panel">
+
+    <!-- 报警确认大按钮（报警时显示） -->
+    <button id="btn-confirm" onclick="acknowledge()">
+      🔕 点击确认 — 停止报警
+    </button>
+
+    <!-- 倒计时环 -->
+    <div id="timer-display">
+      <div id="timer-label">下次检测倒计时</div>
+      <div id="timer-ring">
+        <svg width="120" height="120" viewBox="0 0 120 120">
+          <circle class="ring" id="ring-bg" cx="60" cy="60" r="54"/>
+          <circle class="ring" id="ring-fg" cx="60" cy="60" r="54"/>
+        </svg>
+        <div id="timer-text">
+          <span id="timer-num">15:00</span>
+          <span id="timer-unit">min:sec</span>
+        </div>
+      </div>
+      <div id="timer-progress-label">尚未开始作业</div>
+    </div>
+
+    <!-- 操作按钮行 -->
+    <div id="btn-row">
+      <button id="btn-start" class="btn btn-success" onclick="startWork()">▶ 开始作业</button>
+      <button id="btn-stop"  class="btn btn-ghost"   onclick="stopWork()" disabled>⏹ 结束作业</button>
+    </div>
+
+    <!-- 状态信息条 -->
+    <div id="info-bar">
+      <span id="info-cycle">第 0 次检测</span>
+      <span id="info-time">作业时长：00:00</span>
+    </div>
+
+  </div>
+</div>
+
+<!-- 报警弹窗 -->
+<div id="alarm-modal">
+  <div id="alarm-card">
+    <div id="alarm-icon">🚨</div>
+    <div id="alarm-title">检测提醒！</div>
+    <div id="alarm-msg">15 分钟检测时间已到，请立即对有限空间作业人员进行安全确认检测。</div>
+    <div id="alarm-cycle-info"></div>
+    <button id="btn-ack" onclick="acknowledge()">✅ 已完成检测，确认安全</button>
+    <button id="btn-snooze" onclick="snooze()">⏰ 稍后提醒（60秒后再响）</button>
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="toast"></div>
+
+<script>
+// =============================================
+//  有限空间作业安全监控 App
+//  功能：实时摄像头 + 15分钟周期报警
+// =============================================
+
+const INTERVAL_SECONDS = 15 * 60;   // 15 分钟（可调整为 15 进行测试）
+const SNOOZE_SECONDS   = 60;         // 贪睡时长
+
+// DOM 引用
+const video        = document.getElementById('video');
+const camOverlay   = document.getElementById('cam-overlay');
+const camInfo      = document.getElementById('cam-info');
+const btnFlip      = document.getElementById('btn-flip');
+const recIndicator = document.getElementById('rec-indicator');
+const statusDot    = document.getElementById('status-dot');
+const statusText   = document.getElementById('status-text');
+const timerNum     = document.getElementById('timer-num');
+const timerUnit    = document.getElementById('timer-unit');
+const ringFg       = document.getElementById('ring-fg');
+const progressLabel= document.getElementById('timer-progress-label');
+const btnStart     = document.getElementById('btn-start');
+const btnStop      = document.getElementById('btn-stop');
+const btnConfirm   = document.getElementById('btn-confirm');
+const alarmModal   = document.getElementById('alarm-modal');
+const alarmCycleInfo = document.getElementById('alarm-cycle-info');
+const infoCycle    = document.getElementById('info-cycle');
+const infoTime     = document.getElementById('info-time');
+
+// 状态
+let stream          = null;
+let facingMode      = 'environment'; // 后置摄像头优先（监控场景）
+let isWorking       = false;
+let isAlarming      = false;
+
+let countdownSec    = INTERVAL_SECONDS;
+let countdownTimer  = null;
+let workStartTime   = null;
+let workDurationTimer = null;
+let cycleCount      = 0;           // 已完成检测次数
+
+// 音频上下文（Web Audio API 合成报警音）
+let audioCtx        = null;
+let alarmNodes      = [];
+
+// 环形进度参数
+const CIRCUMFERENCE = 2 * Math.PI * 54;  // ≈ 339.29
+
+// ========== 摄像头 ==========
+
+async function startCamera() {
+  try {
+    if (stream) { stream.getTracks().forEach(t => t.stop()); }
+
+    const constraints = {
+      video: {
+        facingMode: facingMode,
+        width:  { ideal: 1280 },
+        height: { ideal: 720 }
+      },
+      audio: false
+    };
+
+    stream = await navigator.mediaDevices.getUserMedia(constraints);
+    video.srcObject = stream;
+
+    // 镜像（前置翻转，后置不翻）
+    video.className = facingMode === 'user' ? '' : 'rear';
+
+    // 更新分辨率标签
+    video.onloadedmetadata = () => {
+      const { videoWidth: w, videoHeight: h } = video;
+      document.getElementById('cam-res').textContent = `${w}×${h}`;
+      document.getElementById('cam-facing').textContent =
+        facingMode === 'environment' ? '后置摄像头' : '前置摄像头';
+    };
+
+    camOverlay.style.display  = 'none';
+    camInfo.style.display     = 'flex';
+    btnFlip.style.display     = 'flex';
+    recIndicator.classList.add('on');
+
+    updateStatus('active', '摄像头已就绪');
+    showToast('摄像头开启成功 ✅');
+  } catch (err) {
+    console.error(err);
+    showToast('摄像头权限被拒绝，请在设置中允许');
+    updateStatus('idle', '权限被拒绝');
+  }
+}
+
+function flipCamera() {
+  facingMode = facingMode === 'environment' ? 'user' : 'environment';
+  startCamera();
+}
+
+// ========== 状态更新 ==========
+
+function updateStatus(type, msg) {
+  statusDot.className = '';
+  if (type === 'active') statusDot.classList.add('active');
+  if (type === 'alarm')  statusDot.classList.add('alarm');
+  statusText.textContent = msg;
+}
+
+// ========== 作业控制 ==========
+
+function startWork() {
+  if (!stream) {
+    showToast('请先开启摄像头');
+    startCamera();
+    return;
+  }
+  isWorking    = true;
+  cycleCount   = 0;
+  workStartTime = Date.now();
+  countdownSec  = INTERVAL_SECONDS;
+
+  btnStart.disabled = true;
+  btnStop.disabled  = false;
+
+  updateStatus('active', '作业进行中');
+  progressLabel.textContent = '监控中，请保持页面开启';
+
+  startCountdown();
+  startWorkDuration();
+  showToast('作业开始 🚀 已启动 15 分钟检测倒计时');
+}
+
+function stopWork() {
+  isWorking = false;
+  clearInterval(countdownTimer);
+  clearInterval(workDurationTimer);
+  stopAlarm();
+  dismissModal();
+
+  btnStart.disabled = false;
+  btnStop.disabled  = true;
+
+  countdownSec = INTERVAL_SECONDS;
+  renderTimer(INTERVAL_SECONDS);
+  ringFg.style.strokeDashoffset = 0;
+  ringFg.className = '';
+
+  updateStatus('idle', '已结束');
+  progressLabel.textContent = '作业已结束';
+  infoCycle.textContent  = `共完成 ${cycleCount} 次检测`;
+  infoTime.textContent   = '作业时长：' + getWorkDuration();
+
+  showToast(`作业已结束，共完成 ${cycleCount} 次安全检测 ✅`);
+}
+
+// ========== 倒计时核心 ==========
+
+function startCountdown() {
+  clearInterval(countdownTimer);
+  countdownTimer = setInterval(() => {
+    if (!isWorking) return;
+    countdownSec--;
+
+    renderTimer(countdownSec);
+    updateRing(countdownSec);
+
+    if (countdownSec <= 0) {
+      triggerAlarm();
+    }
+  }, 1000);
+}
+
+function renderTimer(sec) {
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  timerNum.textContent = `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+}
+
+function updateRing(sec) {
+  const ratio = sec / INTERVAL_SECONDS;
+  const offset = CIRCUMFERENCE * (1 - ratio);
+  ringFg.style.strokeDashoffset = offset;
+
+  // 颜色分级
+  ringFg.className = '';
+  if (ratio < 0.2)      ringFg.classList.add('danger');
+  else if (ratio < 0.4) ringFg.classList.add('warn');
+
+  // 进度提示
+  const elapsed = INTERVAL_SECONDS - sec;
+  const elMin = Math.floor(elapsed / 60);
+  const elSec = elapsed % 60;
+  progressLabel.textContent = `已过 ${String(elMin).padStart(2,'0')}:${String(elSec).padStart(2,'0')} / 共 15:00`;
+}
+
+// ========== 报警 ==========
+
+function triggerAlarm() {
+  isAlarming = true;
+  cycleCount++;
+
+  clearInterval(countdownTimer);
+
+  updateStatus('alarm', '⚠️ 需要检测！');
+  btnConfirm.classList.add('show');
+  alarmModal.classList.add('show');
+  alarmCycleInfo.textContent = `这是第 ${cycleCount} 次检测提醒`;
+
+  renderTimer(0);
+  ringFg.classList.add('danger');
+  ringFg.style.strokeDashoffset = CIRCUMFERENCE;
+
+  // 启动持续报警音
+  startAlarmSound();
+
+  // 震动（如果支持）
+  if ('vibrate' in navigator) {
+    navigator.vibrate([500, 300, 500, 300, 500]);
+  }
+}
+
+function acknowledge() {
+  if (!isAlarming) return;
+  isAlarming = false;
+
+  stopAlarm();
+  dismissModal();
+  infoCycle.textContent = `第 ${cycleCount} 次检测已确认`;
+
+  // 重置倒计时，开始下一轮
+  countdownSec = INTERVAL_SECONDS;
+  renderTimer(countdownSec);
+  ringFg.style.strokeDashoffset = 0;
+  ringFg.className = '';
+  updateStatus('active', '作业进行中');
+  progressLabel.textContent = '监控中，请保持页面开启';
+
+  startCountdown();
+  showToast(`第 ${cycleCount} 次检测已确认 ✅ 开始下一个 15 分钟`);
+
+  // 停止震动
+  if ('vibrate' in navigator) navigator.vibrate(0);
+}
+
+function snooze() {
+  // 贪睡：60秒后再触发
+  if (!isAlarming) return;
+  isAlarming = false;
+
+  stopAlarm();
+  dismissModal();
+  updateStatus('active', '贪睡中（60s）');
+  progressLabel.textContent = '贪睡模式：60 秒后再次提醒';
+
+  countdownSec = SNOOZE_SECONDS;
+  renderTimer(countdownSec);
+  ringFg.style.strokeDashoffset = CIRCUMFERENCE * (1 - SNOOZE_SECONDS / INTERVAL_SECONDS);
+  ringFg.classList.add('danger');
+
+  if ('vibrate' in navigator) navigator.vibrate(0);
+
+  // 贪睡结束后重新触发
+  countdownTimer = setInterval(() => {
+    if (!isWorking) return;
+    countdownSec--;
+    renderTimer(countdownSec);
+    if (countdownSec <= 0) triggerAlarm();
+  }, 1000);
+
+  showToast('已贪睡，60 秒后再次提醒 ⏰');
+}
+
+function dismissModal() {
+  alarmModal.classList.remove('show');
+  btnConfirm.classList.remove('show');
+}
+
+// ========== 报警音（Web Audio API 合成） ==========
+
+function startAlarmSound() {
+  try {
+    if (!audioCtx) {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    // 如果已有报警音在播放，先停
+    stopAlarm();
+    playBeepLoop();
+  } catch(e) {
+    console.warn('音频不可用:', e);
+  }
+}
+
+function playBeepLoop() {
+  if (!isAlarming || !audioCtx) return;
+
+  // 播放一组 beep：高-低交替
+  const now = audioCtx.currentTime;
+  const freqs = [1200, 800, 1200, 800, 1200];
+
+  freqs.forEach((freq, i) => {
+    const osc  = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+
+    osc.type      = 'square';
+    osc.frequency.value = freq;
+
+    const t0 = now + i * 0.25;
+    const t1 = t0 + 0.2;
+
+    gain.gain.setValueAtTime(0, t0);
+    gain.gain.linearRampToValueAtTime(0.35, t0 + 0.01);
+    gain.gain.setValueAtTime(0.35, t1 - 0.02);
+    gain.gain.linearRampToValueAtTime(0, t1);
+
+    osc.start(t0);
+    osc.stop(t1);
+
+    alarmNodes.push(osc);
+  });
+
+  // 循环播放
+  if (isAlarming) {
+    setTimeout(() => playBeepLoop(), 1500);
+  }
+}
+
+function stopAlarm() {
+  alarmNodes.forEach(n => { try { n.stop(); } catch(e){} });
+  alarmNodes = [];
+}
+
+// ========== 作业时长 ==========
+
+function startWorkDuration() {
+  clearInterval(workDurationTimer);
+  workDurationTimer = setInterval(() => {
+    infoTime.textContent = '作业时长：' + getWorkDuration();
+  }, 1000);
+}
+
+function getWorkDuration() {
+  if (!workStartTime) return '00:00';
+  const elapsed = Math.floor((Date.now() - workStartTime) / 1000);
+  const h = Math.floor(elapsed / 3600);
+  const m = Math.floor((elapsed % 3600) / 60);
+  const s = elapsed % 60;
+  if (h > 0) return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+  return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+}
+
+// ========== Toast ==========
+
+function showToast(msg, duration = 2800) {
+  const toast = document.getElementById('toast');
+  toast.textContent = msg;
+  toast.classList.add('show');
+  setTimeout(() => toast.classList.remove('show'), duration);
+}
+
+// ========== 防止屏幕休眠（Wake Lock API） ==========
+
+let wakeLock = null;
+async function requestWakeLock() {
+  try {
+    if ('wakeLock' in navigator) {
+      wakeLock = await navigator.wakeLock.request('screen');
+      console.log('Wake Lock 已激活 - 屏幕不会休眠');
+    }
+  } catch (e) { console.warn('Wake Lock 不可用:', e); }
+}
+
+document.addEventListener('visibilitychange', async () => {
+  if (document.visibilityState === 'visible' && isWorking) {
+    await requestWakeLock();
+  }
+});
+
+// ========== 初始化 ==========
+
+(function init() {
+  renderTimer(INTERVAL_SECONDS);
+  ringFg.style.strokeDashoffset = 0;
+
+  // 尝试自动开启摄像头
+  if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+    // 不自动请求，等用户点击按钮（避免权限被拦截）
+  }
+
+  requestWakeLock();
+  console.log('有限空间作业监控 App 已初始化');
+})();
+</script>
+</body>
+</html>
